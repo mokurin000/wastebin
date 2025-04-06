@@ -2398,6 +2398,7 @@ dependencies = [
  "anyhow",
  "clap",
  "tabled",
+ "tokio",
  "wastebin_core",
 ]
 

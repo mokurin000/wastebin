@@ -1,13 +1,12 @@
 use crate::crypto::{self, Password};
 use crate::id::Id;
-use parking_lot::Mutex;
 use read::ListEntry;
 use rusqlite::{Connection, Transaction, params};
 use rusqlite_migration::{HookError, M, Migrations};
 use std::io::Cursor;
 use std::path::PathBuf;
 use std::sync::{Arc, LazyLock};
-use tokio::task::spawn_blocking;
+use tokio::sync::Mutex;
 
 static MIGRATIONS: LazyLock<Migrations> = LazyLock::new(|| {
     Migrations::new(vec![
@@ -329,12 +328,12 @@ impl Database {
         let conn = self.conn.clone();
         let write::DatabaseEntry { entry, data, nonce } = entry.compress().await?.encrypt().await?;
 
-        spawn_blocking(move || match entry.expires {
-            None => conn.lock().execute(
+        let _ = match entry.expires {
+            None => conn.lock().await.execute(
                 "INSERT INTO entries (id, uid, data, burn_after_reading, nonce, title) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                 params![id.to_i64(), entry.uid, data, entry.burn_after_reading, nonce, entry.title],
-            ),
-            Some(expires) => conn.lock().execute(
+            )?,
+            Some(expires) => conn.lock().await.execute(
                 "INSERT INTO entries (id, uid, data, burn_after_reading, nonce, expires, title) VALUES (?1, ?2, ?3, ?4, ?5, datetime('now', ?6), ?7)",
                 params![
                     id.to_i64(),
@@ -345,9 +344,8 @@ impl Database {
                     format!("{expires} seconds"),
                     entry.title,
                 ],
-            ),
-        })
-        .await??;
+            )?,
+        };
 
         Ok(())
     }
@@ -357,8 +355,7 @@ impl Database {
         let conn = self.conn.clone();
 
         let id_clone = id.clone();
-        let entry = spawn_blocking(move || {
-            conn.lock().query_row(
+        let entry =             conn.lock().await.query_row(
                 "SELECT data, burn_after_reading, uid, nonce, expires < datetime('now'), title FROM entries WHERE id=?1",
                 params![id_clone.to_i64()],
                 |row| {
@@ -370,10 +367,7 @@ impl Database {
                         expired: row.get::<_, Option<bool>>(4)?.unwrap_or(false),
                         title: row.get::<_, Option<String>>(5)?,
                     })
-                },
-            )
-        })
-        .await??;
+                },)?;
 
         if entry.expired {
             self.delete(id.clone()).await?;
@@ -400,14 +394,11 @@ impl Database {
     pub async fn get_title(&self, id: Id) -> Result<Option<String>, Error> {
         let conn = self.conn.clone();
 
-        let title = spawn_blocking(move || {
-            conn.lock().query_row(
-                "SELECT title FROM entries WHERE id=?1",
-                params![id.to_i64()],
-                |row| row.get(0),
-            )
-        })
-        .await??;
+        let title = conn.lock().await.query_row(
+            "SELECT title FROM entries WHERE id=?1",
+            params![id.to_i64()],
+            |row| row.get(0),
+        )?;
 
         Ok(title)
     }
@@ -416,11 +407,9 @@ impl Database {
     async fn delete(&self, id: Id) -> Result<(), Error> {
         let conn = self.conn.clone();
 
-        spawn_blocking(move || {
-            conn.lock()
-                .execute("DELETE FROM entries WHERE id=?1", params![id.to_i64()])
-        })
-        .await??;
+        conn.lock()
+            .await
+            .execute("DELETE FROM entries WHERE id=?1", params![id.to_i64()])?;
 
         Ok(())
     }
@@ -429,8 +418,8 @@ impl Database {
     pub async fn delete_for(&self, id: Id, uid: i64) -> Result<(), Error> {
         let conn = self.conn.clone();
 
-        let exists: Option<i64> = spawn_blocking(move || {
-            let mut conn = conn.lock();
+        let exists: Option<i64> = {
+            let mut conn = conn.lock().await;
             let tx = conn.transaction()?;
 
             let exists = tx.query_row(
@@ -446,9 +435,8 @@ impl Database {
 
             tx.commit()?;
 
-            exists
-        })
-        .await??;
+            exists?
+        };
 
         exists.map(|_| ()).ok_or(Error::Delete)
     }
@@ -457,23 +445,21 @@ impl Database {
     pub async fn next_uid(&self) -> Result<i64, Error> {
         let conn = self.conn.clone();
 
-        let uid = spawn_blocking(move || {
-            conn.lock().query_row(
-                "UPDATE uids SET n = n + 1 WHERE id = 0 RETURNING n",
-                [],
-                |row| row.get(0),
-            )
-        })
-        .await??;
+        let uid = conn.lock().await.query_row(
+            "UPDATE uids SET n = n + 1 WHERE id = 0 RETURNING n",
+            [],
+            |row| row.get(0),
+        )?;
 
         Ok(uid)
     }
 
     /// List all entries.
-    pub fn list(&self) -> Result<Vec<ListEntry>, Error> {
+    pub async fn list(&self) -> Result<Vec<ListEntry>, Error> {
         let entries = self
             .conn
             .lock()
+            .await
             .prepare("SELECT id, title, nonce, expires < datetime('now') FROM entries")?
             .query_map([], |row| {
                 Ok(ListEntry {
@@ -489,10 +475,11 @@ impl Database {
     }
 
     /// Purge all expired entries and return their [`Id`]s
-    pub fn purge(&self) -> Result<Vec<Id>, Error> {
+    pub async fn purge(&self) -> Result<Vec<Id>, Error> {
         let ids = self
             .conn
             .lock()
+            .await
             .prepare("DELETE FROM entries WHERE expires < datetime('now') RETURNING id")?
             .query_map([], |row| Ok(Id::from(row.get::<_, i64>(0)?)))?
             .collect::<Result<_, _>>()?;
@@ -593,7 +580,7 @@ mod tests {
 
         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
 
-        let ids = db.purge()?;
+        let ids = db.purge().await?;
         assert_eq!(ids.len(), 1);
         assert_eq!(ids[0].to_i64(), 1234);
 
