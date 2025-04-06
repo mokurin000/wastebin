@@ -4,19 +4,74 @@ on:
 
 jobs:
   release:
-    name: release ${{ matrix.target }}
-    runs-on: ubuntu-latest
+    name: Release on ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        target: [x86_64-unknown-linux-musl]
+        platform: [macos-x86_64, macos-arm64, linux-riscv64, linux-x86_64-musl, linux-arm64-musl, windows-x86_64, windows-arm64]
+        include:
+          - platform: macos-x86_64
+            target: x86_64-apple-darwin
+            os: macos-latest
+            suffix: ""
+
+          - platform: macos-arm64
+            target: aarch64-apple-darwin
+            os: macos-latest
+            suffix: ""
+
+          - platform: linux-riscv64
+            target: riscv64gc-unknown-linux-gnu
+            os: ubuntu-latest
+            suffix: ""
+
+          - platform: linux-x86_64-musl
+            target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            suffix: ""
+
+          - platform: linux-arm64-musl
+            target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+            suffix: ""
+
+          - platform: windows-x86_64
+            target: x86_64-pc-windows-msvc
+            os: windows-latest
+            suffix: .exe
+
+          - platform: windows-arm64
+            target: aarch64-pc-windows-msvc
+            os: windows-latest
+            suffix: .exe
+
     steps:
-      - uses: actions/checkout@master
-      - name: Compile and release
-        uses: rust-build/rust-build.action@v1.4.0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - uses: Swatinem/rust-cache@v2
         with:
-          TOOLCHAIN_VERSION: 1.85.0
-          RUSTTARGET: ${{ matrix.target }}
-          EXTRA_FILES: "README.md LICENSE"
+          prefix-key: ${{ matrix.target }}-${{ github.event.release.tag_name }}
+
+      - name: Build binary
+        uses: houseabsolute/actions-rust-cross@v0
+        with:
+          target: ${{ matrix.target }}
+          args: "--locked --release --bin wastebin --bin wastebin-ctl"
+          strip: true
+
+      - name: Prepare assets
+        shell: bash
+        run: |
+          mv target/${{ matrix.target }}/release/wastebin{,-ctl}${{ matrix.suffix }} .
+          tar -cvzf ${{ matrix.target }}.tar.gz LICENSE README.md wastebin{,-ctl}${{ matrix.suffix }}
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.target }}.tar.gz
+          # see https://stackoverflow.com/a/69919067
+          tag_name: ${{ github.event.release.tag_name }}
+          prerelease: false
+          make_latest: true
