@@ -20,3 +20,4 @@ jobs:
           TOOLCHAIN_VERSION: 1.85.0
           RUSTTARGET: ${{ matrix.target }}
           EXTRA_FILES: "README.md LICENSE"
+          EXTRA_COMMAND_FLAGS: "--bin wastebin --bin wastebin-ctl"
