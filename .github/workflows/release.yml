@@ -9,7 +9,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [macos-x86_64, macos-arm64, linux-riscv64, linux-x86_64-musl, linux-arm64-musl, windows-x86_64, windows-arm64]
+        platform: [macos-x86_64, macos-arm64, linux-riscv64-musl, linux-x86_64-musl, linux-arm64-musl, windows-x86_64, windows-arm64]
         include:
           - platform: macos-x86_64
             target: x86_64-apple-darwin
@@ -21,8 +21,8 @@ jobs:
             os: macos-latest
             suffix: ""
 
-          - platform: linux-riscv64
-            target: riscv64gc-unknown-linux-gnu
+          - platform: linux-riscv64-musl
+            target: riscv64gc-unknown-linux-musl
             os: ubuntu-latest
             suffix: ""
 
