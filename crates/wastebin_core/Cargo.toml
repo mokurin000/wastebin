@@ -17,6 +17,7 @@ thiserror = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "rt-multi-thread"] }
 tracing = { workspace = true }
 zstd = "0.13"
+kanal = "0.1.1"
 
 [lints]
 workspace = true

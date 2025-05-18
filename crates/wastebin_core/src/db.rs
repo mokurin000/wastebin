@@ -6,7 +6,8 @@ use rusqlite_migration::{HookError, M, Migrations};
 use std::io::Cursor;
 use std::path::PathBuf;
 use std::sync::LazyLock;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::oneshot;
+use kanal::{AsyncReceiver, AsyncSender, bounded_async};
 
 static MIGRATIONS: LazyLock<Migrations> = LazyLock::new(|| {
     Migrations::new(vec![
@@ -76,7 +77,7 @@ pub enum Error {
 /// Our main database and integrated cache.
 #[derive(Clone)]
 pub struct Database {
-    sender: mpsc::Sender<Command>,
+    sender: AsyncSender<Command>,
 }
 
 /// Database opening modes
@@ -348,12 +349,12 @@ pub enum Command {
 
 pub struct Handler {
     conn: Connection,
-    receiver: mpsc::Receiver<Command>,
+    receiver: AsyncReceiver<Command>,
 }
 
 impl Handler {
     /// Create new database with the given `method`.
-    fn new(method: Open, receiver: mpsc::Receiver<Command>) -> Result<Self, Error> {
+    fn new(method: Open, receiver: AsyncReceiver<Command>) -> Result<Self, Error> {
         tracing::debug!("opening {method:?}");
 
         let mut conn = match method {
@@ -367,7 +368,7 @@ impl Handler {
     }
 
     pub fn run(mut self) -> Result<(), Error> {
-        while let Some(command) = self.receiver.blocking_recv() {
+        while let Ok(command) = self.receiver.as_sync().recv() {
             match command {
                 Command::Insert { id, entry, result } => {
                     result
@@ -542,7 +543,7 @@ impl Handler {
 impl Database {
     /// Create new database with the given `method`.
     pub fn new(method: Open) -> Result<(Self, impl Future<Output = Result<(), Error>>), Error> {
-        let (sender, receiver) = mpsc::channel(256);
+        let (sender, receiver) = bounded_async(256);
         let handler = Handler::new(method, receiver)?;
         let fut = async move { tokio::task::spawn_blocking(|| handler.run()).await? };
         Ok((Self { sender }, fut))
